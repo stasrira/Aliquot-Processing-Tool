@@ -1,7 +1,7 @@
 Attribute VB_Name = "mdlMain"
 Option Explicit
 
-Public Const Version = "1.05"
+Public Const Version = "1.0"
 
 Private Const SubAliquotBarcodesWrkSh = "Sub-aliquot_barcodes"
 Private Const DBManifDataWrkSh = "DB_Manifest_Data"
@@ -13,6 +13,11 @@ Private Const AliquotProcessWrkSh = "Aliquot_Processing"
 
 Private Const ConfigWrkSheet = "config"
 Private Const DictionaryWrkSheet = "dictionary"
+
+Public Const JSON_MARK = "JSON::"
+Public Const Action_Concatenate = "Concatenate"
+Public Const Const_Val = "const_value"
+Public Const Config_Ref = "config_reference"
 
 Public Global_Validated As Boolean
 
@@ -115,7 +120,7 @@ Function GetFirstFoundValue(val_to_find As String, col_letter As String, col_off
     If Not SearchResult Is Nothing Then
         val = SearchResult.Offset(offSetrow, offSetcol).value
     Else
-        val = "ND"
+        val = ""
     End If
     On Error GoTo 0
     
@@ -124,11 +129,63 @@ Function GetFirstFoundValue(val_to_find As String, col_letter As String, col_off
     
     Exit Function
 ErrorHandler:
-    GetFirstFoundValue = "ND"
+    GetFirstFoundValue = "#ERROR#"
 
 End Function
 
-Function PopulateAliquotProcessingTab()
+Public Function LoadAndPopulateAliquotProcessingTab()
+    'CopyAllSubAliquotsForProcessing
+    PopulateAliquotProcessingTab True
+End Function
+
+Public Function ClearAliquotProcessingContent(Optional warning As Boolean = True, Optional firstColumnToClean As String = "A")
+    Dim rng As Range
+    Dim rows_num As Integer, cols_num As Integer
+    Dim iResponse As Integer
+    
+    If warning Then
+        'confirm if user want to proceed.
+        iResponse = MsgBox("The system is about to clear content of the 'Aliquot_Processing' tab. " _
+                    & "All content of the tab (except the headers) will be removed." _
+                    & vbCrLf & vbCrLf & "Do you want to proceed? If not, click 'Cancel'." _
+                    , vbOKCancel + vbInformation, "Sub-aliquot Barcode Processing")
+        
+        If iResponse <> vbOK Then
+            'exit sub based on user's response
+            Exit Function
+        End If
+    End If
+    
+    rows_num = GetWorkSheetRowsCount(Worksheets(AliquotProcessWrkSh)) ' number of rows to be processed
+    cols_num = GetWorkSheetColumnsCount(Worksheets(AliquotProcessWrkSh)) 'number of columns to be processed
+    
+    With Worksheets(AliquotProcessWrkSh)
+        If rows_num > 1 Then
+            'proceed only if there are some other rows beside the header
+            Set rng = Range(firstColumnToClean & "2:" & Cells(rows_num, cols_num).Address)
+            rng.ClearContents
+        End If
+        'reset all highlighted cells to no color
+        Worksheets(AliquotProcessWrkSh).Cells.Interior.Color = xlNone
+    End With
+End Function
+
+Public Function CopyAllSubAliquotsForProcessing(Optional warning As Boolean = True)
+    Dim rows_num As Integer
+    Dim target_sub_al_col As String, source_sub_al_col As String
+    Dim rng_src As Range
+    
+    ClearAliquotProcessingContent warning
+    
+    'rows_num = GetWorkSheetRowsCount(Worksheets(SubAliquotBarcodesWrkSh))
+    target_sub_al_col = GetConfigParameterValueB("AliquotProcess-Sub_Aliquot_ID") 'column letter to be used to find the sub_aliquots on the target tab
+    source_sub_al_col = GetConfigParameterValueB("SA-Sub_Aliquot_ID") 'column letter to be used to find the sub_aliquots on the source tab
+    
+    CopySelectedColumnToTargetSheet Worksheets(SubAliquotBarcodesWrkSh), Worksheets(AliquotProcessWrkSh), source_sub_al_col & ":" & target_sub_al_col
+    
+End Function
+
+Public Function PopulateAliquotProcessingTab(Optional copy_subaliquots_before_processing As Boolean = False)
     Dim rng_rows As Range, rng_cols As Range
     Dim row_cell As Range, col_cell As Range
     Dim rows_num As Integer, cols_num As Integer
@@ -141,6 +198,7 @@ Function PopulateAliquotProcessingTab()
     Dim refresh_db As String
     Dim tStart As Date, tEnd As Date
     Dim iResponse As Integer
+    Dim valid_msg As String, msg As String, msg_style As Integer
     
     'confirm if user want to proceed.
     iResponse = MsgBox("The system is about to start processing aliquots on 'Aliquot_Processing' tab. " _
@@ -158,6 +216,14 @@ Function PopulateAliquotProcessingTab()
     On Error GoTo ErrHandler 'commented to test, need to be uncommented
     Application.EnableEvents = False
     Application.ScreenUpdating = False
+    
+    'load a fresh set of aliquots before processing
+    If copy_subaliquots_before_processing Then
+        CopyAllSubAliquotsForProcessing False
+    End If
+    
+    'Clear all columns that will be populated (except the sub-aliquot column), so starting with the B column
+    ClearAliquotProcessingContent False, "B"
     
     'check if refresh DB connection on a fly is needed
     refresh_db = GetConfigParameterValueB("Run Database refresh link on a fly")
@@ -193,21 +259,23 @@ Function PopulateAliquotProcessingTab()
                 'Debug.Print (col_cell.Address)
                 'get column header value
                 col_header = col_cell.Offset(-1 * (col_cell.Row - 1), 0).Value2
-                'get instructions from the config for the current colum
-                col_instr = GetConfigParameterValueB("Al_Proc-" & col_header)
-                'Debug.Print (col_instr)
-                'Debug.Print (GetConfigParameterValueB(col_instr) & " => " & GetConfigParameterValueC(col_instr))
                 
-                Select Case GetConfigParameterValueC(col_instr)
-                    Case "Sub-aliquot_barcodes"
-                        col_cell.value = GetFirstFoundValue(sa_id, source_sub_al_col, _
-                            CStr(GetConfigParameterValueB(col_instr)), _
-                            Worksheets(CStr(GetConfigParameterValueC(col_instr))))
-                    Case "DB_Manifest_Data"
-                        col_cell.value = GetFirstFoundValue(a_id, source_al_col, _
-                            CStr(GetConfigParameterValueB(col_instr)), _
-                            Worksheets(CStr(GetConfigParameterValueC(col_instr))))
-                End Select
+                col_cell.value = Get_AlProcessing_FieldValue(col_header, sa_id, a_id)
+'''                'get instructions from the config for the current colum
+'''                col_instr = GetConfigParameterValueB("Al_Proc-" & col_header)
+'''                'Debug.Print (col_instr)
+'''                'Debug.Print (GetConfigParameterValueB(col_instr) & " => " & GetConfigParameterValueC(col_instr))
+'''
+'''                Select Case GetConfigParameterValueC(col_instr)
+'''                    Case "Sub-aliquot_barcodes"
+'''                        col_cell.value = GetFirstFoundValue(sa_id, source_sub_al_col, _
+'''                            CStr(GetConfigParameterValueB(col_instr)), _
+'''                            Worksheets(CStr(GetConfigParameterValueC(col_instr))))
+'''                    Case "DB_Manifest_Data"
+'''                        col_cell.value = GetFirstFoundValue(a_id, source_al_col, _
+'''                            CStr(GetConfigParameterValueB(col_instr)), _
+'''                            Worksheets(CStr(GetConfigParameterValueC(col_instr))))
+'''                End Select
                 
                 
             Next
@@ -224,9 +292,21 @@ Function PopulateAliquotProcessingTab()
         
     End With
     
-    MsgBox "Processing aliquots on 'Aliquot_Processing' tab was successfully completed." _
-        & vbCrLf & "Execution time: " & getTimeLength(tStart, tEnd) _
-        , vbInformation, "Aliquot Processing Tool"
+    'run validation of the data on the Aliquot Processing tab
+    valid_msg = ValidateRequiredFields()
+    
+    If valid_msg = "OK" Then
+        msg = "Processing aliquots on the 'Aliquot_Processing' tab was successfully completed. No validation errors were identified." _
+                & vbCrLf & "Execution time: " & getTimeLength(tStart, tEnd)
+        msg_style = vbInformation
+    Else
+        msg = "Processing aliquots on the 'Aliquot_Processing' tab was completed. Validation warnings were identified." _
+            & vbCrLf & "Execution time: " & getTimeLength(tStart, tEnd) _
+            & vbCrLf & vbCrLf & valid_msg
+        msg_style = vbExclamation
+    End If
+    
+    MsgBox msg, msg_style, "Aliquot Processing Tool"
     
     'GoTo ExitMark
     Exit Function
@@ -236,6 +316,121 @@ ErrHandler:
 ExitMark:
     Application.EnableEvents = True
     Application.ScreenUpdating = True
+End Function
+
+'Get field value for a particular field for the given sub_aliquot_id
+'sa_id id defines the row that is being updated and the col_header defines the column to be updated
+Private Function Get_AlProcessing_FieldValue(col_header As String, sa_id As String, a_id As String) As String
+    Dim col_instr_b As String, col_instr_c As String
+    Dim out_val As String
+    Dim instr_dict As dictionary, inst_val As Variant
+    Dim action As String, val_type As String, str_val As String
+    
+    'get configuration values from column B on the Config tab for the given col_header value
+    col_instr_b = GetConfigParameterValueB("Al_Proc-" & col_header)
+    'get configuration values from column C on the Config tab for the given col_header value
+    col_instr_c = GetConfigParameterValueC("Al_Proc-" & col_header)
+        
+    'check if config column C contains identification for the JSON instructions
+    If Left(col_instr_c, Len(JSON_MARK)) = JSON_MARK Then
+        'Debug.Print (col_instr_c)
+        col_instr_c = Replace(col_instr_c, JSON_MARK, "")
+        'load provided JSON
+        Set instr_dict = ParseJson(col_instr_c)
+        
+        'get "Action" setting from the JSON
+        action = instr_dict("Action")
+            
+        out_val = ""
+        
+        'loop through the array of Value objects from the JSON
+        For Each inst_val In instr_dict("Values")
+            val_type = inst_val("Type")
+            str_val = inst_val("Value")
+            
+            If action = Action_Concatenate Then
+                'proceed here if action is Concatenate
+                Select Case val_type
+                    Case Const_Val
+                        'append a constant value
+                        out_val = out_val & str_val
+                    Case Config_Ref
+                        'append a value from the given data source
+                        out_val = out_val & GetSimpleFieldValue(str_val, sa_id, a_id)
+                End Select
+            End If
+           
+        Next
+    Else
+        'if no JSON instructions are provided, get the value based on the configuration in the B column
+        out_val = GetSimpleFieldValue(col_instr_b, sa_id, a_id)
+    End If
+    
+    Get_AlProcessing_FieldValue = out_val
+End Function
+
+Private Function GetSimpleFieldValue(col_instr As String, sa_id As String, a_id As String) As String
+    Dim out_val As String
+    Dim source_sub_al_col As String, source_al_col As String
+    
+    source_sub_al_col = GetConfigParameterValueB("SA-Sub_Aliquot_ID") 'column letter to be used to find the sub_aliquots on the source tab
+    source_al_col = GetConfigParameterValueB("MDB-aliquot_id") 'column letter to be used to find the aliquots on the source tab
+    
+    Select Case GetConfigParameterValueC(col_instr)
+        Case "Sub-aliquot_barcodes"
+            out_val = GetFirstFoundValue(sa_id, source_sub_al_col, _
+                CStr(GetConfigParameterValueB(col_instr)), _
+                Worksheets(CStr(GetConfigParameterValueC(col_instr))))
+        Case "DB_Manifest_Data"
+            out_val = GetFirstFoundValue(a_id, source_al_col, _
+                CStr(GetConfigParameterValueB(col_instr)), _
+                Worksheets(CStr(GetConfigParameterValueC(col_instr))))
+    End Select
+    
+    GetSimpleFieldValue = out_val
+End Function
+
+'checks if any of the values in the required columns are blank and reports such columns
+Public Function ValidateRequiredFields() As String
+    Dim req_cols As String, req_col As Variant
+    Dim req_arr() As String
+    Dim found_vals() As String, found_val As Variant
+    Dim rng As Range
+    Dim col_header As String
+    Dim str_out As String
+    
+    req_cols = GetConfigParameterValueB("Validate_Required_Columns")
+    req_arr = Split(req_cols, ",")
+    
+    With Worksheets(AliquotProcessWrkSh)
+        For Each req_col In req_arr
+            Set rng = .Range(CStr(req_col) & "2:" & CStr(req_col) & CStr(GetWorkSheetRowsCount(Worksheets(AliquotProcessWrkSh))))
+            found_vals = FindAllValuesOrLocationRows(rng, "", "0,0", False, True)
+            
+            'if some blank values were found
+            If ArrLength(found_vals) > 0 Then
+                'get column header value
+                col_header = .Range(CStr(req_col) & "2").Offset(-1 * (.Range(CStr(req_col) & "2").Row - 1), 0).Value2
+                
+                'set background color to red for all cells that failed validation
+                For Each found_val In found_vals
+                    .Range(CStr(req_col) & CStr(found_val)).Interior.Color = vbRed
+                Next
+                
+                If Len(str_out) = 0 Then
+                    str_out = "The following are the counts of failed aliquots with the associated column (affected cells were highlighted in red):"
+                End If
+                
+                str_out = str_out & vbCrLf & "- """ & col_header & """: " & CStr(ArrLength(found_vals))
+                
+            End If
+        Next
+    End With
+    
+    If str_out = "" Then str_out = "OK"
+    
+    ValidateRequiredFields = str_out
+    
 End Function
 
 Public Function GetWorkSheetRowsCount(ws As Worksheet) As Integer
@@ -423,7 +618,7 @@ Private Function ArrLength(a As Variant) As Integer
 End Function
 
 Private Sub QuickSort(ByRef Field() As String, ByVal LB As Long, ByVal UB As Long)
-    Dim P1 As Long, P2 As Long, Ref As String, TEMP As String
+    Dim P1 As Long, P2 As Long, Ref As String, temp As String
 
     P1 = LB
     P2 = UB
@@ -439,9 +634,9 @@ Private Sub QuickSort(ByRef Field() As String, ByVal LB As Long, ByVal UB As Lon
         Loop
 
         If P1 <= P2 Then
-            TEMP = Field(P1)
+            temp = Field(P1)
             Field(P1) = Field(P2)
-            Field(P2) = TEMP
+            Field(P2) = temp
 
             P1 = P1 + 1
             P2 = P2 - 1
@@ -634,12 +829,15 @@ Public Sub ImportSubAliquotBarcodesFile()
         MsgBox "Sub-aliquot Barcodes file was sucessfully loaded." _
             & vbCrLf & "Execution time: " & getTimeLength(tStart, tEnd) _
             , vbInformation, "CHARM COVID Detection Validation"
+    Else
+        MsgBox "Sub-aliquot Barcodes file did not load correctly. Some other errors should have been shown before this message." _
+            , vbExclamation, "Sub-aliquot Processing"
     End If
     
 End Sub
 
 Private Function ImportFileWhole(strFileToOpen As String, ws_target As Worksheet, Optional src_worksheet_name As String = "") As Boolean ', file_type_to_open As String
-    'Dim strFileToOpen As String
+    Dim b_copy_status As Boolean
     
     On Error GoTo ErrHandler 'commented to test, need to be uncommented
     Application.EnableEvents = False
@@ -647,14 +845,18 @@ Private Function ImportFileWhole(strFileToOpen As String, ws_target As Worksheet
     
     ws_target.Cells.Clear 'delete everything on the target worksheet
     
-    CopyDataFromFile ws_target, strFileToOpen, src_worksheet_name 'copy date of the main sheet from the source file to the temp_load sheet
-    
-    DeleteBlankRows ws_target 'clean blank rows of just imported file on the temp_load sheet
+    b_copy_status = CopyDataFromFile(ws_target, strFileToOpen, src_worksheet_name)  'copy date of the main sheet from the source file to the temp_load sheet
+    If b_copy_status Then
+        DeleteBlankRows ws_target 'clean blank rows of just imported file on the temp_load sheet
+        ImportFileWhole = True
+    Else
+        ImportFileWhole = False
+    End If
 
     Application.EnableEvents = True
     Application.ScreenUpdating = True
     
-    ImportFileWhole = True
+    
     Exit Function
     
 ErrHandler:
@@ -665,6 +867,7 @@ ExitMark:
     ImportFileWhole = False
 End Function
 
+'TODELETE: this function not in use
 Private Function ImportFile(strFileToOpen As String, ws_target As Worksheet) As Boolean ', file_type_to_open As String
     'Dim strFileToOpen As String
     
@@ -719,10 +922,30 @@ ExitMark:
     ImportFile = False
 End Function
 
+Private Function IsSheetExists(SheetName As String, Optional wkb_src As Workbook = Nothing) As Boolean
+    Dim wkb As Workbook
+    Dim ws As Worksheet
+    
+    IsSheetExists = False
+    
+    If wkb_src Is Nothing Then
+      Set wkb = Application.ThisWorkbook
+    Else
+      Set wkb = wkb_src
+    End If
+    
+    For Each ws In wkb.Worksheets
+      If SheetName = ws.Name Then
+        IsSheetExists = True
+        Exit Function
+      End If
+    Next ws
+End Function
+
 'This sub opens specified file and loads it contents to a specified worksheet
-Private Sub CopyDataFromFile(ws_target As Worksheet, _
+Private Function CopyDataFromFile(ws_target As Worksheet, _
                     src_file_path As String, _
-                    Optional src_worksheet_name As String = "")
+                    Optional src_worksheet_name As String = "") As Boolean
     On Error GoTo ErrHandler
     Application.ScreenUpdating = False
     
@@ -736,10 +959,16 @@ Private Sub CopyDataFromFile(ws_target As Worksheet, _
         src_worksheet_name = src.Worksheets(1).Name
     End If
     
-    src.Worksheets(src_worksheet_name).Cells.Copy 'copy into a clipboard
-    ws_target.Cells.PasteSpecial Paste:=xlPasteAll 'paste to the worksheet
-    Application.CutCopyMode = False 'clean clipboard
-    
+    If IsSheetExists(src_worksheet_name, src) Then
+        src.Worksheets(src_worksheet_name).Cells.Copy 'copy into a clipboard
+        ws_target.Cells.PasteSpecial Paste:=xlPasteAll 'paste to the worksheet
+        Application.CutCopyMode = False 'clean clipboard
+        
+        CopyDataFromFile = True
+    Else
+        CopyDataFromFile = False
+        MsgBox "Expected to exists (based on the tool configuration) worksheet '" & src_worksheet_name & "' was not found in the '" & src_file_path & "' source file. Aborting the data loading.", vbCritical, "Aliquot processing tool"
+    End If
   
     ' CLOSE THE SOURCE FILE.
     src.Close False             ' FALSE - DON'T SAVE THE SOURCE FILE.
@@ -747,13 +976,13 @@ Private Sub CopyDataFromFile(ws_target As Worksheet, _
     
     Application.ScreenUpdating = True
     
-    Exit Sub
+    Exit Function
     
 ErrHandler:
     MsgBox Err.Description, vbCritical
     Application.EnableEvents = True
     Application.ScreenUpdating = True
-End Sub
+End Function
 
 Private Sub CopySelectedColumnToTargetSheet(source As Worksheet, Target As Worksheet, mapping As String)
     Dim copy_cols() As String
@@ -878,7 +1107,7 @@ Private Function GetDateReceived() As String
     End If
 End Function
 
-Public Function SavePreparedData() As dictionary
+Public Function SavePreparedManifest() As dictionary
     'Dim abort As Boolean: abort = False
     Dim wb As Workbook, ws_source As Worksheet, ws_target As Worksheet
     Dim wb_source As Workbook
@@ -902,7 +1131,7 @@ Public Function SavePreparedData() As dictionary
 '        End If
 '    End If
     
-    path = GetConfigParameterValueB("Save Created Metadata Files Path")
+    path = GetConfigParameterValueB("Save Created Manifest Files Path")
     'validate received path
     If Dir(path, vbDirectory) = "" Then
         str1 = "The path to the exporting directory:" & vbCrLf & vbCrLf & path & vbCrLf & vbCrLf & "provided in the 'config' tab (see item named 'Save Created Metadata Files Path') cannot be reached. " _
@@ -941,7 +1170,7 @@ Public Function SavePreparedData() As dictionary
     If Not wb Is Nothing Then
         Set ws_target = wb.Sheets(1) 'get reference to the worksheet of the new file
         
-        ws_source.Range(GetConfigParameterValueB("DetectionFile_ColumnExportRange", wb_source)).Copy 'copy data from a source sheet to a memory
+        ws_source.Range(GetConfigParameterValueB("ManifestFile_ColumnExportRange", wb_source)).Copy 'copy data from a source sheet to a memory
         ws_target.Cells.PasteSpecial Paste:=xlPasteValues 'paste data from memory to the target sheet as "values only"
         
         CleanCreatedFile ws_target, wb_source
@@ -1012,8 +1241,8 @@ Private Sub CleanCreatedFile(ws_target As Worksheet, wb_source As Workbook)
     Dim formatDateColumns As String: formatDateColumns = ""
     Dim col As Variant, cfg_row As Integer
     
-    deleteColumns = GetConfigParameterValueB("Delete Columns In Target", wb_source)
-    formatDateColumns = GetConfigParameterValueB("Format Date Columns In Target", wb_source)
+    deleteColumns = GetConfigParameterValueB("Delete Columns In Exported Manifest", wb_source)
+    formatDateColumns = GetConfigParameterValueB("Format Date Columns In Manifest", wb_source)
     
     If Len(Trim(deleteColumns)) > 0 Then
         'loop through columns and delete one by one

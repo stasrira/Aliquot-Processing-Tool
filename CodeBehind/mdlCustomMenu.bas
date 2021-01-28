@@ -27,18 +27,33 @@ Public Sub LoadCustomMenus()
     With cmbControl
         .Caption = cCustomMenuName 'names the menu item
         With .Controls.Add(Type:=msoControlButton) 'adds a dropdown button to the menu item
-            .Caption = "Import Sub-Aliquot Barcodes" 'adds a description to the menu item
+            .Caption = "Import Sub-Aliquot Barcodes File" 'adds a description to the menu item
             .OnAction = "ImportSubAliquotBarcodesFile" 'runs the specified macro
-            .FaceId = 109 '638 '1098 'assigns an icon to the dropdown
+            .FaceId = 109 '638 '1098, 351, 18 'assigns an icon to the dropdown
         End With
         With .Controls.Add(Type:=msoControlButton) 'adds a dropdown button to the menu item
-            .Caption = "Process Aliquots" 'adds a description to the menu item
-            .OnAction = "PopulateAliquotProcessingTab" 'runs the specified macro
+            .Caption = "Load All Imported Aliquots" 'adds a description to the menu item
+            .OnAction = "CopyAllSubAliquotsForProcessing" 'runs the specified macro
             .FaceId = 1098 '638 '1098 'assigns an icon to the dropdown
         End With
         With .Controls.Add(Type:=msoControlButton) 'adds a dropdown button to the menu item
-            .Caption = "Export Validated Detection File" 'adds a description to the menu item
-            .OnAction = "SavePreparedData" 'runs the specified macro
+            .Caption = "Load And Process All Imported Aliquots" 'adds a description to the menu item
+            .OnAction = "LoadAndPopulateAliquotProcessingTab" 'runs the specified macro
+            .FaceId = 1098 '638 '1098 'assigns an icon to the dropdown
+        End With
+        With .Controls.Add(Type:=msoControlButton) 'adds a dropdown button to the menu item
+            .Caption = "Process Only Currently Loaded Aliquots" 'adds a description to the menu item
+            .OnAction = "PopulateAliquotProcessingTab" 'runs the specified macro
+            .FaceId = 501 '501 638 '1098 'assigns an icon to the dropdown
+        End With
+        With .Controls.Add(Type:=msoControlButton) 'adds a dropdown button to the menu item
+            .Caption = "Clear Aliquot Processing Tab Content" 'adds a description to the menu item
+            .OnAction = "ClearAliquotProcessingContent" 'runs the specified macro
+            .FaceId = 108 '638 '1098 'assigns an icon to the dropdown
+        End With
+        With .Controls.Add(Type:=msoControlButton) 'adds a dropdown button to the menu item
+            .Caption = "Export Manifest File" 'adds a description to the menu item
+            .OnAction = "SavePreparedManifest" 'runs the specified macro
             .FaceId = 526 '638 '1098 'assigns an icon to the dropdown
         End With
 '        With .Controls.Add(Type:=msoControlButton) 'adds a dropdown button to the menu item
