@@ -1139,7 +1139,7 @@ Public Function SavePreparedManifest() As dictionary
                 & vbCrLf & vbCrLf & "Creation of the new detection export file was aborted!"
         MsgBox str1, vbCritical, "Export of Detection Data"
         
-        Set SavePreparedData = out_dict
+        Set SavePreparedManifest = out_dict
         Exit Function
     End If
     
@@ -1225,7 +1225,7 @@ Public Function SavePreparedManifest() As dictionary
     End If
     'AddLogEntry "Finish creating new '" & file_type & "' file.", LogMsgType.info
     
-    Set SavePreparedData = out_dict
+    Set SavePreparedManifest = out_dict
     Exit Function
     
 ErrHandler:
